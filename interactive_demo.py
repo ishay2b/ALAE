@@ -24,6 +24,7 @@ import lreq
 
 from PIL import Image
 import bimpy
+import cv2
 
 
 lreq.use_implicit_lreq.set(True)
@@ -110,9 +111,10 @@ def sample(cfg, logger):
     path = 'dataset_samples/faces/realign1024x1024'
 
     paths = list(os.listdir(path))
+    print("Found %d items at path" % len(paths))
     paths.sort()
     paths_backup = paths[:]
-    randomize = bimpy.Bool(True)
+    randomize = bimpy.Bool(False)
     current_file = bimpy.String("")
 
     ctx = bimpy.Context()
@@ -125,6 +127,7 @@ def sample(cfg, logger):
 
     def loadNext():
         img = np.asarray(Image.open(path + '/' + paths[0]))
+        print("Read image with shape", img.shape)
         current_file.value = paths[0]
         paths.pop(0)
         if len(paths) == 0:
@@ -181,7 +184,7 @@ def sample(cfg, logger):
 
     latents, latents_original, img_src = loadNext()
 
-    ctx.init(1800, 1600, "Styles")
+    ctx.init(1000, 1000, "Styles")
 
     def update_image(w, latents_original):
         with torch.no_grad():
@@ -199,39 +202,31 @@ def sample(cfg, logger):
             return resultsample.type(torch.uint8).transpose(0, 2).transpose(0, 1)
 
     im_size = 2 ** (cfg.MODEL.LAYER_COUNT + 1)
+    print("im_size = 2 ** (cfg.MODEL.LAYER_COUNT + 1)", im_size)
     im = update_image(latents, latents_original)
-    print(im.shape)
-    im = bimpy.Image(im)
+    print("update_image returnes shape", im.shape)
+    #im = bimpy.Image(im)
 
-    display_original = True
+    display_original = False
 
     seed = 0
 
     while not ctx.should_close():
         with ctx:
+            bimpy.set_next_window_pos(bimpy.Vec2(20, 20), bimpy.Condition.Once)
+            bimpy.set_next_window_size(bimpy.Vec2(700, 700), bimpy.Condition.Once) 
+
             new_latents = latents + sum([v.value * w for v, w in zip(attribute_values, W)])
 
             if display_original:
-                im = bimpy.Image(img_src)
+                im = bimpy.Image(cv2.resize(img_src, (600,600)))
             else:
-                im = bimpy.Image(update_image(new_latents, latents_original))
+                img_ = update_image(new_latents, latents_original).cpu().numpy()
+                im = bimpy.Image(cv2.resize(img_, (600,600)))
 
-            bimpy.begin("Principal directions")
-            bimpy.columns(2)
-            bimpy.set_column_width(0, im_size + 20)
-            bimpy.image(im)
-            bimpy.next_column()
-
-            for v, label in zip(attribute_values, labels):
-                bimpy.slider_float(label, v, -40.0, 40.0)
+            for v, label in zip(attribute_values, labels): bimpy.slider_float(label, v, -40.0, 40.0)
 
             bimpy.checkbox("Randomize noise", randomize)
-
-            if randomize.value:
-                seed += 1
-
-            torch.manual_seed(seed)
-
             if bimpy.button('Next'):
                 latents, latents_original, img_src = loadNext()
                 display_original = True
@@ -245,7 +240,12 @@ def sample(cfg, logger):
                 paths.insert(0, current_file.value)
                 latents, latents_original, img_src = loadNext()
 
-            bimpy.end()
+            if randomize.value:
+                seed += 1
+                torch.manual_seed(seed)
+
+            bimpy.image(im)
+
 
 
 if __name__ == "__main__":
